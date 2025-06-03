@@ -1,234 +1,269 @@
 # Airtable CLI - AI Instructions
 
+## Critical: Authentication Requirements
+
+**ALWAYS use Personal Access Tokens (PATs)**:
+- Environment variable: `AIRTABLE_PAT` (NOT `AIRTABLE_API_KEY`)
+- Tokens start with `pat`, not `key`
+- API keys (starting with `key`) are deprecated as of Feb 2024
+
 ## When to Use This Tool
 
 ### Automatic Usage Triggers
 - User mentions "Airtable" operations
-- Tasks involve spreadsheet-like data management
-- Need to sync or export Airtable data
-- Automating record creation/updates
-- Bulk operations on Airtable bases
+- Managing spreadsheet-like data in the cloud
+- Need for database operations without SQL
+- Syncing data between services
+- Automating record management
+- Bulk data operations
 
 ### Example User Requests
-- "List all records in my Airtable"
+- "Add this to my Airtable"
+- "Show me what's in my CRM base"
+- "Update all records where status is pending"
+- "Export my inventory to CSV"
 - "Create a new entry in Airtable"
-- "Export Airtable data to CSV"
-- "Update the status field in Airtable"
-- "Show me what's in this base"
-
-## Important Setup Requirement
-
-**ALWAYS check for API key first:**
-```bash
-# This will fail if AIRTABLE_API_KEY is not set
-airtable bases --json
-```
-
-If it fails, instruct user to:
-1. Get token from https://airtable.com/create/tokens
-2. Set: `export AIRTABLE_API_KEY='token'`
+- "Find all contacts from last month"
 
 ## Usage Patterns
 
-### Discovery Flow
-When user asks about Airtable without specifics:
+### Authentication Check
 ```bash
-# 1. First, list their bases
+# ALWAYS start with authentication test
+airtable whoami --json
+
+# If it fails, check the error - likely missing PAT
+# Guide user to create one at https://airtable.com/create/tokens
+```
+
+### Discovery Flow
+When user mentions Airtable without specifics:
+```bash
+# 1. List their bases
 airtable bases --json
 
-# 2. Show tables in a base
-airtable base BASE_ID --json
+# 2. Get schema for the relevant base
+airtable schema BASE_ID --json
 
-# 3. List records from a table
+# 3. List records or perform requested operation
 airtable list BASE_ID "Table Name" --json
 ```
 
-### Record Operations
+### Common Operations
+
+#### Adding Records
 ```bash
-# Always use --json for reliable parsing
-airtable get BASE_ID "Table Name" RECORD_ID --json
+# Single record
+airtable create BASE_ID "Contacts" \
+  --data '{"Name": "John Doe", "Email": "john@example.com"}' \
+  --typecast --json
 
-# Create with proper JSON escaping
-airtable create BASE_ID "Table Name" --data '{"Field": "Value"}' --json
-
-# Update specific fields only
-airtable update BASE_ID "Table Name" RECORD_ID --data '{"Status": "Done"}' --json
-
-# Delete with --force to skip confirmation in scripts
-airtable delete BASE_ID "Table Name" RECORD_ID --force --json
+# Multiple records (more efficient)
+airtable create BASE_ID "Orders" \
+  --data '[{"Product": "Widget", "Qty": 5}, {"Product": "Gadget", "Qty": 3}]' \
+  --typecast --json
 ```
-
-### Common Workflows
 
 #### Finding Records
 ```bash
-# List with filtering
-airtable list BASE_ID "Contacts" --filter "Status=Active" --json
+# Use filter formulas for precise queries
+airtable list BASE_ID "Customers" \
+  --filter-formula "AND({Status}='Active', {City}='New York')" \
+  --json
 
-# Process with jq
-airtable list BASE_ID "Tasks" --json | \
-  jq '.[] | select(.fields.Priority == "High")'
+# Date-based queries
+airtable list BASE_ID "Tasks" \
+  --filter-formula "IS_AFTER({Due Date}, TODAY())" \
+  --json
+```
+
+#### Updating Records
+```bash
+# First find the record
+records=$(airtable list BASE_ID "Projects" \
+  --filter-formula "{Name}='Project Alpha'" --json)
+record_id=$(echo "$records" | jq -r '.[0].id')
+
+# Then update it
+airtable update BASE_ID "Projects" "$record_id" \
+  --data '{"Status": "Completed"}' --json
 ```
 
 #### Bulk Operations
 ```bash
-# Export all data
-airtable export BASE_ID "Table Name" --output backup.json
+# Export for backup
+airtable export BASE_ID "Inventory" --output backup.json
 
-# Create multiple records
-for record in records_*.json; do
-  airtable create BASE_ID "Table Name" --data "@$record" --json
-  sleep 0.2  # Respect rate limits
-done
+# Batch update from file
+cat updates.json | \
+  airtable update BASE_ID "Products" --file - --json
+
+# Upsert (update or create)
+airtable upsert BASE_ID "Contacts" \
+  --data '[{"Email": "test@example.com", "Name": "Test User"}]' \
+  --merge-on "Email" --json
 ```
 
-#### Data Sync
+## Advanced Patterns
+
+### Complex Filtering
 ```bash
-# Export from one base
-airtable export BASE_ID_1 "Source Table" --output temp.json
+# Multiple conditions with OR
+airtable list BASE_ID "Leads" \
+  --filter-formula "OR({Priority}='High', AND({Score}>80, {Status}='New'))" \
+  --json
 
-# Import to another (with processing)
-cat temp.json | jq -c '.[] | .fields' | while read fields; do
-  airtable create BASE_ID_2 "Dest Table" --data "$fields" --json
-done
+# Text search
+airtable list BASE_ID "Notes" \
+  --filter-formula "FIND('urgent', LOWER({Content})) > 0" \
+  --json
+
+# Empty field check
+airtable list BASE_ID "Contacts" \
+  --filter-formula "{Phone} = BLANK()" \
+  --json
 ```
 
-## Output Parsing
-
-### JSON Structure
-```json
-{
-  "id": "recXXXXXXXXXXXXXX",
-  "createdTime": "2024-01-15T10:30:00.000Z",
-  "fields": {
-    "Name": "Example",
-    "Status": "Active",
-    "Count": 42
-  }
-}
+### Working with Views
+```bash
+# Use pre-configured views for complex filters
+airtable list BASE_ID "Orders" --view "This Month" --json
+airtable export BASE_ID "Tasks" --view "Overdue" --output overdue.csv
 ```
 
-### Parsing Examples
-```python
-# Python
-import subprocess
-import json
+### Schema Inspection
+```bash
+# Get full schema to understand structure
+schema=$(airtable schema BASE_ID --json)
 
-result = subprocess.run(
-    ['airtable', 'list', base_id, table_name, '--json'],
-    capture_output=True, text=True
-)
-records = json.loads(result.stdout)
-for record in records:
-    print(f"{record['id']}: {record['fields'].get('Name', 'Unnamed')}")
+# Extract table names
+echo "$schema" | jq -r '.tables[].name'
+
+# Find field types
+echo "$schema" | jq '.tables[] | select(.name=="Contacts") | .fields[] | {name, type}'
 ```
 
 ## Error Handling
 
+### Rate Limiting
+The tool automatically handles rate limits with exponential backoff. If you see rate limit messages, the tool is working correctly - just waiting.
+
 ### Common Errors and Solutions
 
-1. **No API Key**
+1. **Authentication Failed**
+   ```bash
+   # Check if using old API key
+   if [[ "$AIRTABLE_PAT" == key* ]]; then
+     echo "Error: Using deprecated API key. Create a Personal Access Token instead."
+   fi
+   ```
+
+2. **Permission Denied**
+   - Token lacks required scopes
+   - Guide user to add scopes at token settings
+
+3. **Base Not Found**
+   - List bases to verify access
+   - Check if base ID is correct
+
+4. **Invalid Formula**
+   - Test in Airtable UI first
+   - Ensure field names match exactly
+
+## Integration Patterns
+
+### Data Pipeline
 ```bash
-if ! airtable bases --json 2>/dev/null; then
-    echo "Please set AIRTABLE_API_KEY environment variable"
-    echo "Get token from: https://airtable.com/create/tokens"
-fi
+# Extract from Airtable
+airtable export BASE_ID "Source" --output data.json
+
+# Transform with jq
+cat data.json | jq '.[] | .fields | {
+  name: .Name,
+  email: .Email,
+  status: (.Status // "Unknown")
+}' > transformed.json
+
+# Load to another table
+airtable create BASE_ID "Destination" --file transformed.json
 ```
 
-2. **Invalid Base/Table**
+### Monitoring Script
 ```bash
-# Verify base exists
-if ! airtable base "$BASE_ID" --json 2>/dev/null; then
-    echo "Invalid base ID. Available bases:"
-    airtable bases
-fi
-```
-
-3. **Rate Limiting**
-```bash
-# Add delays for bulk operations
-for record in "${records[@]}"; do
-    airtable create BASE_ID "Table" --data "$record" --json || {
-        echo "Failed, waiting before retry..."
-        sleep 30
-        airtable create BASE_ID "Table" --data "$record" --json
-    }
-    sleep 0.2
+# Check for new records periodically
+while true; do
+  new_count=$(airtable list BASE_ID "Submissions" \
+    --filter-formula "CREATED_TIME() > '${last_check}'" \
+    --json | jq length)
+  
+  if [ "$new_count" -gt 0 ]; then
+    echo "Found $new_count new submissions"
+    # Process them...
+  fi
+  
+  last_check=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+  sleep 300
 done
 ```
 
-## Integration Best Practices
-
-### When to Use Airtable CLI
-- ✅ Reading data for analysis
-- ✅ Creating records from other sources
-- ✅ Updating status fields
-- ✅ Exporting for backups
-- ✅ Simple CRUD operations
-
-### When NOT to Use
-- ❌ Complex formula fields (use UI)
-- ❌ Schema modifications (use UI)
-- ❌ Attachment handling (use UI/API)
-- ❌ Real-time sync (use webhooks)
-
-### Performance Tips
-- Use `--limit` for large tables
-- Export to JSON for complex processing
-- Batch operations with sleep delays
-- Cache base/table IDs
-
-## Common Patterns for AI
-
-### User asks to "add to Airtable"
+### Sync with External Services
 ```bash
-# 1. Discover their bases
-bases=$(airtable bases --json)
-echo "Which base would you like to use?"
-# Show bases to user
-
-# 2. Discover tables
-tables=$(airtable base BASE_ID --json)
-echo "Which table?"
-# Show tables to user
-
-# 3. Show schema
-airtable schema BASE_ID "Table Name" --json
-# Understand required fields
-
-# 4. Create record
-airtable create BASE_ID "Table Name" \
-  --data '{"Field1": "Value1", "Field2": "Value2"}' --json
+# Get records modified recently
+airtable list BASE_ID "Products" \
+  --filter-formula "LAST_MODIFIED_TIME() > '2024-01-01'" \
+  --json | \
+jq '.[] | {
+  id: .id,
+  sku: .fields.SKU,
+  price: .fields.Price,
+  updated: .fields["Last Modified"]
+}' | \
+# Send to external API
+while read -r product; do
+  curl -X POST https://api.example.com/products \
+    -H "Content-Type: application/json" \
+    -d "$product"
+done
 ```
 
-### User asks to "check Airtable"
-```bash
-# Show recent records
-airtable list BASE_ID "Table Name" --limit 10 --sort "-Created" --json
-```
+## Best Practices for AI
 
-### User asks to "update Airtable"
-```bash
-# First find the record
-records=$(airtable list BASE_ID "Table Name" --filter "Name=Target" --json)
-record_id=$(echo "$records" | jq -r '.[0].id')
-
-# Then update it
-airtable update BASE_ID "Table Name" "$record_id" \
-  --data '{"Status": "Updated"}' --json
-```
+1. **Always use --json flag** for reliable parsing
+2. **Check authentication first** with `whoami`
+3. **Use --typecast** when creating/updating to avoid type errors
+4. **Batch operations** when possible (up to 10 records)
+5. **Cache base/table IDs** - they don't change
+6. **Use filter formulas** instead of fetching all records
+7. **Handle errors gracefully** - check exit codes
 
 ## Important Notes
 
-1. **Table names with spaces** must be quoted
-2. **JSON data** must be valid - use `jq` to validate
-3. **Rate limits** are strict - add delays for bulk ops
-4. **Field names** are case-sensitive
-5. **Deleted records** cannot be recovered
+### Field Names
+- Case-sensitive and must match exactly
+- Use quotes for fields with spaces: `"{Field Name}"`
+- Special characters need escaping in formulas
+
+### Formulas
+- Test complex formulas in Airtable UI first
+- Use single quotes inside formulas: `"{Status}='Active'"`
+- Escape properly in shell: `--filter-formula "{Name}=\"John's Shop\""`
+
+### Limits
+- 10 records max per create/update/delete request
+- 100 records max per page when listing
+- 5 requests/second per base
+- Filter formulas have complexity limits
+
+### Data Types
+- Dates: ISO 8601 format (2024-01-15)
+- Checkboxes: true/false
+- Numbers: No quotes needed with --typecast
+- Linked records: Array of record IDs
+- Attachments: Array of {url, filename} objects
 
 ## Security Reminders
 
-- Never log or display the API key
-- Use `--token` flag only for one-off operations
-- Tokens inherit user permissions
-- No way to increase rate limits
+- Never log or display the PAT
+- Warn users if they paste an API key (starts with 'key')
+- PATs are scoped - may not have all permissions
+- Tokens inherit user's base permissions
