@@ -1,6 +1,6 @@
 #!/Users/pete/Projects/tool-library/gmail-tool/venv/bin/python
 """
-Gmail CLI Tool - Fixed version using requests instead of httplib2
+Gmail CLI Tool - Comprehensive command-line interface for Gmail
 """
 
 import os
@@ -9,7 +9,6 @@ import json
 import pickle
 import base64
 import argparse
-import socket
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any
@@ -18,18 +17,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 
-# Force IPv4 to avoid network issues
-original_getaddrinfo = socket.getaddrinfo
-def forced_ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-socket.getaddrinfo = forced_ipv4_getaddrinfo
-
-# Set httplib2 timeout for OAuth flow
-os.environ['HTTPLIB2_TIMEOUT'] = '30'
-
-from google.auth.transport.requests import Request, AuthorizedSession
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Gmail API scopes
 SCOPES = [
@@ -46,23 +38,14 @@ CONFIG_DIR = Path.home() / '.gmail-cli'
 TOKEN_FILE = CONFIG_DIR / 'token.pickle'
 CREDENTIALS_FILE = CONFIG_DIR / 'credentials.json'
 
-# Base URL for Gmail API
-BASE_URL = 'https://www.googleapis.com/gmail/v1'
-
 
 class GmailCLI:
     def __init__(self):
-        self.session = None
+        self.service = None
         self.user_email = None
-        self._service = None
-    
-    @property
-    def service(self):
-        """Compatibility property for gmail_advanced"""
-        return self._service
         
     def authenticate(self):
-        """Authenticate and create authorized session"""
+        """Authenticate and create Gmail API service"""
         creds = None
         
         # Token file stores the user's access and refresh tokens
@@ -73,7 +56,6 @@ class GmailCLI:
         # If there are no (valid) credentials, let the user log in
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                print("Refreshing expired token...")
                 creds.refresh(Request())
             else:
                 if not CREDENTIALS_FILE.exists():
@@ -88,40 +70,20 @@ class GmailCLI:
                     
                 flow = InstalledAppFlow.from_client_secrets_file(
                     str(CREDENTIALS_FILE), SCOPES)
-                
-                # Run with fixed port and timeout
-                print("Starting OAuth flow...")
-                creds = flow.run_local_server(
-                    port=8080,
-                    authorization_prompt_message='Please visit this URL to authorize: {url}',
-                    success_message='Authorization complete! You can close this window.',
-                    open_browser=True
-                )
+                creds = flow.run_local_server(port=0)
             
             # Save the credentials for the next run
             CONFIG_DIR.mkdir(exist_ok=True)
             with open(TOKEN_FILE, 'wb') as token:
                 pickle.dump(creds, token)
-            print("Authentication successful!")
         
-        # Create authorized session
-        self.session = AuthorizedSession(creds)
-        self.session.headers.update({'Accept': 'application/json'})
-        
-        # Create compatibility service wrapper for gmail_advanced
-        from gmail_service_compat import ServiceWrapper
-        self._service = ServiceWrapper(self.session, BASE_URL)
+        self.service = build('gmail', 'v1', credentials=creds)
         
         # Get user's email address
         try:
-            response = self.session.get(f'{BASE_URL}/users/me/profile', timeout=30)
-            if response.status_code == 200:
-                profile = response.json()
-                self.user_email = profile['emailAddress']
-            else:
-                print(f"Error getting profile: {response.status_code} - {response.text}")
-                sys.exit(1)
-        except Exception as error:
+            profile = self.service.users().getProfile(userId='me').execute()
+            self.user_email = profile['emailAddress']
+        except HttpError as error:
             print(f"An error occurred: {error}")
             sys.exit(1)
     
@@ -129,64 +91,47 @@ class GmailCLI:
                      include_spam_trash: bool = False) -> List[Dict]:
         """List messages matching query"""
         try:
-            params = {
-                'maxResults': max_results,
-                'includeSpamTrash': include_spam_trash
-            }
+            messages = []
+            results = self.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=max_results,
+                includeSpamTrash=include_spam_trash
+            ).execute()
             
-            if query:
-                params['q'] = query
-            
-            response = self.session.get(
-                f'{BASE_URL}/users/me/messages',
-                params=params,
-                timeout=30
-            )
-            
-            if response.status_code != 200:
-                print(f"Error listing messages: {response.status_code} - {response.text}")
-                return []
-            
-            results = response.json()
-            messages = results.get('messages', [])
+            if 'messages' in results:
+                messages.extend(results['messages'])
             
             # Get message details
             detailed_messages = []
             for msg in messages:
                 try:
-                    detail_response = self.session.get(
-                        f'{BASE_URL}/users/me/messages/{msg["id"]}',
-                        params={
-                            'format': 'metadata',
-                            'metadataHeaders': ['From', 'To', 'Subject', 'Date']
-                        },
-                        timeout=30
-                    )
-                    if detail_response.status_code == 200:
-                        detailed_messages.append(detail_response.json())
-                except Exception as error:
+                    message = self.service.users().messages().get(
+                        userId='me',
+                        id=msg['id'],
+                        format='metadata',
+                        metadataHeaders=['From', 'To', 'Subject', 'Date']
+                    ).execute()
+                    detailed_messages.append(message)
+                except HttpError as error:
                     print(f"Error getting message {msg['id']}: {error}")
             
             return detailed_messages
             
-        except Exception as error:
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return []
     
     def get_message(self, msg_id: str, format: str = 'full') -> Optional[Dict]:
         """Get a specific message"""
         try:
-            response = self.session.get(
-                f'{BASE_URL}/users/me/messages/{msg_id}',
-                params={'format': format},
-                timeout=30
-            )
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Error getting message: {response.status_code} - {response.text}")
-                return None
-        except Exception as error:
+            message = self.service.users().messages().get(
+                userId='me',
+                id=msg_id,
+                format=format
+            ).execute()
+            return message
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return None
     
@@ -217,36 +162,23 @@ class GmailCLI:
             raw_message = base64.urlsafe_b64encode(
                 message.as_bytes()).decode('utf-8')
             
-            response = self.session.post(
-                f'{BASE_URL}/users/me/messages/send',
-                json={'raw': raw_message},
-                timeout=30
-            )
+            send_message = self.service.users().messages().send(
+                userId='me',
+                body={'raw': raw_message}
+            ).execute()
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Error sending message: {response.status_code} - {response.text}")
-                return None
+            return send_message
             
-        except Exception as error:
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return None
     
     def list_labels(self) -> List[Dict]:
         """List all labels"""
         try:
-            response = self.session.get(
-                f'{BASE_URL}/users/me/labels',
-                timeout=30
-            )
-            if response.status_code == 200:
-                results = response.json()
-                return results.get('labels', [])
-            else:
-                print(f"Error listing labels: {response.status_code} - {response.text}")
-                return []
-        except Exception as error:
+            results = self.service.users().labels().list(userId='me').execute()
+            return results.get('labels', [])
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return []
     
@@ -260,19 +192,14 @@ class GmailCLI:
                 'messageListVisibility': message_list_visibility
             }
             
-            response = self.session.post(
-                f'{BASE_URL}/users/me/labels',
-                json=label_object,
-                timeout=30
-            )
+            label = self.service.users().labels().create(
+                userId='me',
+                body=label_object
+            ).execute()
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Error creating label: {response.status_code} - {response.text}")
-                return None
+            return label
             
-        except Exception as error:
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return None
     
@@ -286,56 +213,45 @@ class GmailCLI:
             if remove_labels:
                 body['removeLabelIds'] = remove_labels
             
-            response = self.session.post(
-                f'{BASE_URL}/users/me/messages/{msg_id}/modify',
-                json=body,
-                timeout=30
-            )
+            message = self.service.users().messages().modify(
+                userId='me',
+                id=msg_id,
+                body=body
+            ).execute()
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Error modifying message: {response.status_code} - {response.text}")
-                return None
+            return message
             
-        except Exception as error:
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return None
     
     def trash_message(self, msg_id: str) -> bool:
         """Move message to trash"""
         try:
-            response = self.session.post(
-                f'{BASE_URL}/users/me/messages/{msg_id}/trash',
-                timeout=30
-            )
-            return response.status_code == 200
-        except Exception as error:
+            self.service.users().messages().trash(userId='me', id=msg_id).execute()
+            return True
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return False
     
     def delete_message(self, msg_id: str) -> bool:
         """Permanently delete a message"""
         try:
-            response = self.session.delete(
-                f'{BASE_URL}/users/me/messages/{msg_id}',
-                timeout=30
-            )
-            return response.status_code == 204
-        except Exception as error:
+            self.service.users().messages().delete(userId='me', id=msg_id).execute()
+            return True
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return False
     
     def batch_delete(self, msg_ids: List[str]) -> bool:
         """Batch delete messages"""
         try:
-            response = self.session.post(
-                f'{BASE_URL}/users/me/messages/batchDelete',
-                json={'ids': msg_ids},
-                timeout=30
-            )
-            return response.status_code == 204
-        except Exception as error:
+            self.service.users().messages().batchDelete(
+                userId='me',
+                body={'ids': msg_ids}
+            ).execute()
+            return True
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return False
     
@@ -347,36 +263,25 @@ class GmailCLI:
                 'action': action
             }
             
-            response = self.session.post(
-                f'{BASE_URL}/users/me/settings/filters',
-                json=filter_object,
-                timeout=30
-            )
+            result = self.service.users().settings().filters().create(
+                userId='me',
+                body=filter_object
+            ).execute()
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Error creating filter: {response.status_code} - {response.text}")
-                return None
+            return result
             
-        except Exception as error:
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return None
     
     def list_filters(self) -> List[Dict]:
         """List all filters"""
         try:
-            response = self.session.get(
-                f'{BASE_URL}/users/me/settings/filters',
-                timeout=30
-            )
-            if response.status_code == 200:
-                results = response.json()
-                return results.get('filter', [])
-            else:
-                print(f"Error listing filters: {response.status_code} - {response.text}")
-                return []
-        except Exception as error:
+            results = self.service.users().settings().filters().list(
+                userId='me'
+            ).execute()
+            return results.get('filter', [])
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return []
     
@@ -388,19 +293,14 @@ class GmailCLI:
                 'labelIds': label_ids or ['INBOX']
             }
             
-            response = self.session.post(
-                f'{BASE_URL}/users/me/watch',
-                json=request,
-                timeout=30
-            )
+            result = self.service.users().watch(
+                userId='me',
+                body=request
+            ).execute()
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Error setting up watch: {response.status_code} - {response.text}")
-                return None
+            return result
             
-        except Exception as error:
+        except HttpError as error:
             print(f"An error occurred: {error}")
             return None
 

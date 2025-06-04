@@ -1,3 +1,0 @@
-#!/bin/bash
-# Gmail Advanced CLI wrapper
-exec /Users/pete/Projects/tool-library/gmail-tool/gmail_advanced.py "$@"

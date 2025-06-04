@@ -4,12 +4,15 @@ A comprehensive command-line interface for Gmail that leverages the full capabil
 
 ## Purpose
 
-This tool provides complete Gmail functionality from the command line, including:
-- Reading, sending, and searching emails
-- Managing labels and filters
-- Batch operations for efficiency
-- Push notifications setup
-- Full OAuth 2.0 authentication (required as of Sept 2024)
+This tool provides complete Gmail functionality from the command line with an intuitive interface:
+- Reading, searching, and sending emails
+- Thread management and replies
+- Draft creation and management
+- Attachment handling
+- Label and filter management
+- Settings configuration
+- Inbox analysis and export
+- Smart features like unsubscribe detection
 
 ## Setup
 
@@ -28,162 +31,188 @@ This tool provides complete Gmail functionality from the command line, including
 
 ### 2. Install Tool
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Clone the repository
+cd ~/Projects/tool-library/gmail-tool
 
-# Create config directory
-mkdir -p ~/.gmail-cli
+# Install dependencies (handled by setup.sh)
+./setup.sh
 
 # Move credentials file
+mkdir -p ~/.gmail-cli
 mv ~/Downloads/credentials.json ~/.gmail-cli/credentials.json
-
-# Make script executable
-chmod +x gmail_cli.py
 ```
 
 ### 3. First Run
 ```bash
-./gmail_cli.py list
+gmail list
 # This will open a browser for OAuth authentication
 # Grant permissions and the tool will save tokens for future use
 ```
 
-## Usage
+## Command Structure
 
-### List Messages
+All commands follow the pattern: `gmail <command> [subcommand] [options]`
+
+## Core Commands
+
+### List and Search Messages
 ```bash
 # List recent messages
-./gmail_cli.py list
+gmail list
+gmail list -n 20  # List 20 messages
 
-# Search with query
-./gmail_cli.py list -q "from:example@gmail.com"
-./gmail_cli.py list -q "is:unread label:important"
-./gmail_cli.py list -q "has:attachment after:2024/12/1"
-
-# List more messages
-./gmail_cli.py list -n 50
-
-# Include spam/trash
-./gmail_cli.py list --include-spam-trash
+# Search messages
+gmail search "is:unread"
+gmail search "from:example@gmail.com" -n 50
+gmail search "has:attachment after:2024/12/1"
+gmail search "subject:invoice label:important"
 ```
 
 ### Read Messages
 ```bash
-# Read full message
-./gmail_cli.py read MESSAGE_ID
+# Read a message
+gmail read MESSAGE_ID
 
-# Read metadata only
-./gmail_cli.py read MESSAGE_ID --format metadata
-
-# Get raw message
-./gmail_cli.py read MESSAGE_ID --format raw
+# Different formats
+gmail read MESSAGE_ID --format metadata  # Headers only
+gmail read MESSAGE_ID --format raw       # Raw email
+gmail read MESSAGE_ID --format full      # Full message (default)
 ```
 
 ### Send Messages
 ```bash
 # Simple message
-./gmail_cli.py send "user@example.com" "Subject" "Message body"
+gmail send "user@example.com" "Subject" "Message body"
 
 # With attachments
-./gmail_cli.py send "user@example.com" "Report" "Please find attached" -a report.pdf -a data.csv
+gmail send "user@example.com" "Report" "Please find attached" -a report.pdf -a data.csv
+
+# Reply to a thread
+gmail reply THREAD_ID "user@example.com" "Reply body"
+
+# Forward a message
+gmail forward MESSAGE_ID "forward@example.com" -c "FYI, please review"
 ```
 
-### Manage Labels
+## Draft Management
+```bash
+# List drafts
+gmail draft list
+
+# Create a draft
+gmail draft create "to@example.com" "Subject" "Message body"
+
+# Send a draft
+gmail draft send DRAFT_ID
+
+# Delete a draft
+gmail draft delete DRAFT_ID
+```
+
+## Thread Management
+```bash
+# View entire conversation thread
+gmail thread view THREAD_ID
+
+# Reply to a thread
+gmail thread reply THREAD_ID "to@example.com" "Reply body"
+```
+
+## Attachment Operations
+```bash
+# List attachments in a message
+gmail attachment list MESSAGE_ID
+
+# Download all attachments
+gmail attachment download MESSAGE_ID -o ./downloads/
+
+# Search by attachment
+gmail attachment search --filename "*.pdf"
+gmail attachment search --larger 5000000   # Files > 5MB
+gmail attachment search --smaller 100000   # Files < 100KB
+```
+
+## Label Management
 ```bash
 # List all labels
-./gmail_cli.py labels list
+gmail label list
 
-# Create new label
-./gmail_cli.py labels create "Projects/ClientA"
+# Create a new label
+gmail label create "Projects/ClientA"
 
 # Apply label to message
-./gmail_cli.py labels apply MESSAGE_ID "Projects/ClientA"
+gmail label apply MESSAGE_ID "Projects/ClientA"
+
+# Remove label from message
+gmail label remove MESSAGE_ID "Projects/ClientA"
 ```
 
-### Delete/Trash Messages
+## Filter Management
 ```bash
-# Move to trash (recoverable)
-./gmail_cli.py trash MESSAGE_ID
+# List filters
+gmail filter list
 
-# Permanent delete (use with caution!)
-./gmail_cli.py delete MESSAGE_ID
+# Create a filter
+gmail filter create --from "newsletter@example.com" --add-label "Newsletters"
+gmail filter create --subject "invoice" --add-label "Billing" --remove-label "INBOX"
 
-# Batch delete multiple messages
-./gmail_cli.py batch-delete MSG_ID1 MSG_ID2 MSG_ID3
+# Delete a filter
+gmail filter delete FILTER_ID
 ```
 
-### Filters
+## Settings
 ```bash
-# List all filters
-./gmail_cli.py filters list
+# Vacation responder
+gmail settings vacation get
+gmail settings vacation enable --subject "Out of Office" --body "I'll be back Monday"
+gmail settings vacation disable
+
+# List send-as aliases
+gmail settings sendas
+
+# List forwarding addresses
+gmail settings forwarding
 ```
+
+## Smart Features
+```bash
+# Mark messages as important
+gmail important mark MESSAGE_ID1 MESSAGE_ID2
+gmail important unmark MESSAGE_ID
+
+# Find unsubscribe link
+gmail unsubscribe MESSAGE_ID
+
+# Delete/Trash messages
+gmail trash MESSAGE_ID              # Move to trash
+gmail delete MESSAGE_ID             # Permanent delete (with confirmation)
+gmail batch-delete ID1 ID2 ID3      # Delete multiple
+```
+
+## Analysis and Export
+```bash
+# Analyze inbox patterns
+gmail analyze                    # Last 30 days
+gmail analyze --days 7          # Last 7 days
+gmail analyze --json            # Output as JSON
+
+# Export messages
+gmail export "is:important" -f json -o important.json
+gmail export "from:client@example.com" -f csv -o client_emails.csv
+gmail export "label:archive" -f mbox -o archive.mbox --include-body
+```
+
+## Advanced Features
 
 ### Push Notifications
 ```bash
 # Set up push notifications (requires Pub/Sub topic)
-./gmail_cli.py watch "projects/myproject/topics/gmail-push"
-
-# Watch specific labels
-./gmail_cli.py watch "projects/myproject/topics/gmail-push" -l INBOX IMPORTANT
+gmail watch "projects/myproject/topics/gmail-push"
+gmail watch "projects/myproject/topics/gmail-push" -l INBOX IMPORTANT
 ```
 
-## Output Examples
-
-### List Output
-```
-ID: 18d5a2b3c4d5e6f7
-From: John Doe <john@example.com>
-To: you@gmail.com
-Subject: Meeting Tomorrow
-Date: Mon, 1 Jan 2025 10:30:00 -0800
-Labels: UNREAD, INBOX, IMPORTANT
---------------------------------------------------
-```
-
-### Filter Output
-```
-Filter ID: ANe1BmhgK2x...
-  Criteria: {
-    "from": "notifications@github.com"
-  }
-  Action: {
-    "addLabelIds": ["Label_123"],
-    "removeLabelIds": ["INBOX"]
-  }
---------------------------------------------------
-```
-
-## Configuration
-
-- **Config Directory**: `~/.gmail-cli/`
-- **Credentials**: `~/.gmail-cli/credentials.json` (OAuth client config)
-- **Token Storage**: `~/.gmail-cli/token.pickle` (saved authentication)
-
-## Technical Details
-
-### Dependencies
-- `google-api-python-client`: Official Gmail API client
-- `google-auth-oauthlib`: OAuth 2.0 authentication flow
-- Python 3.6+
-
-### API Usage
-- Uses Gmail API v1
-- Implements batch operations for efficiency
-- Supports all Gmail scopes for full functionality
-
-### Rate Limits
-- 250 quota units per user per second
-- 1 billion quota units per day
-- Batch operations reduce quota usage
-
-### Security
-- OAuth 2.0 authentication (mandatory)
-- Tokens stored locally with pickle
-- No passwords stored
-- Refresh tokens handled automatically
-
-## Common Search Queries
-
+### Complex Searches
+Common search operators:
 - `is:unread` - Unread messages
 - `from:user@example.com` - From specific sender
 - `to:me` - Sent directly to you
@@ -195,6 +224,67 @@ Filter ID: ANe1BmhgK2x...
 - `larger:10M` - Size filters
 - `in:anywhere` - Search all folders
 
+## Output Examples
+
+### Message Display
+```
+ID: 18d5a2b3c4d5e6f7
+From: John Doe <john@example.com>
+To: you@gmail.com
+Subject: Meeting Tomorrow
+Date: Mon, 1 Jan 2025 10:30:00 -0800
+Labels: UNREAD, INBOX, IMPORTANT
+--------------------------------------------------
+```
+
+### Thread Display
+```
+Thread ID: 18d5a2b3c4d5e6f7
+Messages: 3
+--------------------------------------------------
+
+Message 1:
+  From: John Doe <john@example.com>
+  Date: Mon, 1 Jan 2025 10:30:00 -0800
+  Subject: Meeting Tomorrow
+  Preview: Can we meet tomorrow at 2pm to discuss...
+
+Message 2:
+  From: you@gmail.com
+  Date: Mon, 1 Jan 2025 11:00:00 -0800
+  Subject: Re: Meeting Tomorrow
+  Preview: Sure, 2pm works for me. See you then...
+```
+
+### Inbox Analysis Output
+```
+=== Inbox Analysis ===
+Total messages: 636
+Date range: 30 days
+
+Top 10 Senders:
+  john@example.com: 45 messages
+  newsletter@company.com: 23 messages
+  ...
+
+Top 10 Domains:
+  gmail.com: 120 messages
+  company.com: 89 messages
+  ...
+
+Label Distribution:
+  INBOX: 245 messages
+  IMPORTANT: 89 messages
+  UNREAD: 34 messages
+  ...
+```
+
+## Configuration
+
+- **Config Directory**: `~/.gmail-cli/`
+- **Credentials**: `~/.gmail-cli/credentials.json` (OAuth client config)
+- **Token Storage**: `~/.gmail-cli/token.pickle` (saved authentication)
+
 ## Error Handling
 
 The tool provides clear error messages for common issues:
@@ -204,12 +294,72 @@ The tool provides clear error messages for common issues:
 - Network connectivity issues
 - Invalid message IDs
 
-## Future Enhancements
+## Tips and Tricks
 
-Planned features:
-- Interactive mode with message threading
-- Template system for common replies
-- Offline cache for metadata
-- Export to various formats (mbox, PST)
-- Advanced filter creation UI
-- Keyboard shortcuts in interactive mode
+1. **Batch Operations**: Many commands support multiple IDs for efficiency
+2. **JSON Output**: Add `--json` to many commands for scripting
+3. **Pipe Commands**: Output can be piped to other tools
+4. **Search First**: Use search to find messages before operating on them
+
+## Examples
+
+### Daily Email Workflow
+```bash
+# Check unread messages
+gmail search "is:unread" -n 20
+
+# Read specific message
+gmail read MESSAGE_ID
+
+# Reply to thread
+gmail reply THREAD_ID "sender@example.com" "Thanks for the update"
+
+# Archive by applying label and removing from inbox
+gmail label apply MESSAGE_ID "Archive"
+gmail label remove MESSAGE_ID "INBOX"
+```
+
+### Bulk Operations
+```bash
+# Find and export client emails
+gmail export "from:client@company.com" -f csv -o client_communications.csv
+
+# Clean up old newsletters
+gmail search "from:newsletter@* older_than:30d" -n 100
+# Review the list, then batch delete if desired
+
+# Find large attachments
+gmail attachment search --larger 10000000  # > 10MB
+```
+
+### Automation Examples
+```bash
+# Check for urgent emails
+urgent=$(gmail search "is:unread subject:urgent" -n 10)
+
+# Auto-label emails
+gmail filter create --from "boss@company.com" --add-label "Priority"
+
+# Export today's emails for backup
+gmail export "after:$(date +%Y/%m/%d)" -f mbox -o "backup_$(date +%Y%m%d).mbox"
+```
+
+## Security Notes
+
+- OAuth tokens are stored locally with appropriate permissions
+- No passwords are ever stored
+- Tokens can be revoked through Google Account settings
+- Each scope is explicitly requested during authentication
+
+## Rate Limits
+
+- 250 quota units per user per second
+- 1 billion quota units per day
+- Batch operations help reduce quota usage
+
+## Troubleshooting
+
+1. **Authentication Issues**: Delete `~/.gmail-cli/token.pickle` and re-authenticate
+2. **Permission Errors**: Ensure all Gmail API scopes are enabled
+3. **Timeout Errors**: The tool uses requests library with proper timeouts
+4. **Network Issues**: Check internet connectivity and firewall settings

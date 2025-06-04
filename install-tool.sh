@@ -74,9 +74,16 @@ print_color $GREEN "Installing $TOOL_NAME..."
 EXECUTABLE=""
 if [ -f "$TOOL_DIR/$TOOL_NAME.py" ]; then
     EXECUTABLE="$TOOL_DIR/$TOOL_NAME.py"
-    WRAPPER_CONTENT="#!/bin/bash
+    # Check if there's a virtual environment
+    if [ -f "$TOOL_DIR/venv/bin/python" ]; then
+        WRAPPER_CONTENT="#!/bin/bash
 # $TOOL_NAME CLI wrapper
-exec python $EXECUTABLE \"\$@\""
+exec $TOOL_DIR/venv/bin/python $EXECUTABLE \"\$@\""
+    else
+        WRAPPER_CONTENT="#!/bin/bash
+# $TOOL_NAME CLI wrapper
+exec python3 $EXECUTABLE \"\$@\""
+    fi
 elif [ -f "$TOOL_DIR/$TOOL_NAME.sh" ]; then
     EXECUTABLE="$TOOL_DIR/$TOOL_NAME.sh"
     WRAPPER_CONTENT="#!/bin/bash
@@ -96,9 +103,16 @@ else
     fi
     # Determine if it's Python or shell
     if head -1 "$EXECUTABLE" | grep -q python; then
-        WRAPPER_CONTENT="#!/bin/bash
+        # Check if there's a virtual environment
+        if [ -f "$TOOL_DIR/venv/bin/python" ]; then
+            WRAPPER_CONTENT="#!/bin/bash
 # $TOOL_NAME CLI wrapper
-exec python $EXECUTABLE \"\$@\""
+exec $TOOL_DIR/venv/bin/python $EXECUTABLE \"\$@\""
+        else
+            WRAPPER_CONTENT="#!/bin/bash
+# $TOOL_NAME CLI wrapper
+exec python3 $EXECUTABLE \"\$@\""
+        fi
     else
         WRAPPER_CONTENT="#!/bin/bash
 # $TOOL_NAME CLI wrapper
@@ -118,25 +132,37 @@ chmod +x "$WRAPPER_PATH"
 print_color $GREEN "Created wrapper: $WRAPPER_PATH"
 
 # Step 4: Add bin to PATH if not already there
+PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\""
+PATH_ADDED=false
+
+# Add to .bashrc if it exists
+if [ -f "$HOME/.bashrc" ]; then
+    if ! grep -q "Tool Library Commands" "$HOME/.bashrc"; then
+        echo "" >> "$HOME/.bashrc"
+        echo "# Tool Library Commands" >> "$HOME/.bashrc"
+        echo "$PATH_LINE" >> "$HOME/.bashrc"
+        print_color $GREEN "Added $BIN_DIR to PATH in ~/.bashrc"
+        PATH_ADDED=true
+    fi
+fi
+
+# Add to .zshrc if it exists
+if [ -f "$HOME/.zshrc" ]; then
+    if ! grep -q "Tool Library Commands" "$HOME/.zshrc"; then
+        echo "" >> "$HOME/.zshrc"
+        echo "# Tool Library Commands" >> "$HOME/.zshrc"
+        echo "$PATH_LINE" >> "$HOME/.zshrc"
+        print_color $GREEN "Added $BIN_DIR to PATH in ~/.zshrc"
+        PATH_ADDED=true
+    fi
+fi
+
+# Export for current session
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
-    # Detect shell
-    if [ -n "$ZSH_VERSION" ]; then
-        SHELL_RC="$HOME/.zshrc"
-    elif [ -n "$BASH_VERSION" ]; then
-        SHELL_RC="$HOME/.bashrc"
-    else
-        print_color $YELLOW "Could not detect shell. Please add $BIN_DIR to your PATH manually."
-        SHELL_RC=""
-    fi
-    
-    if [ -n "$SHELL_RC" ]; then
-        echo "" >> "$SHELL_RC"
-        echo "# Tool Library Commands" >> "$SHELL_RC"
-        echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$SHELL_RC"
-        print_color $GREEN "Added $BIN_DIR to PATH in $SHELL_RC"
-        export PATH="$BIN_DIR:$PATH"
-    fi
-else
+    export PATH="$BIN_DIR:$PATH"
+fi
+
+if [ "$PATH_ADDED" = false ]; then
     print_color $YELLOW "bin directory already in PATH"
 fi
 

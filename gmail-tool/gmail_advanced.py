@@ -12,8 +12,8 @@ from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 import re
 
-from googleapiclient.errors import HttpError
 from gmail_cli import GmailCLI
+from gmail_service_compat import HttpError
 
 
 class GmailAdvanced(GmailCLI):
