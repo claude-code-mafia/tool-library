@@ -1,0 +1,55 @@
+name: Sync to md-agents
+on:
+  push:
+    branches: [master]
+    paths:
+      - '**.md'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tool-library
+        uses: actions/checkout@v4
+        with:
+          path: tool-library
+
+      - name: Checkout md-agents
+        uses: actions/checkout@v4
+        with:
+          repository: peteknowsai/md-agents
+          path: md-agents
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Copy tools to md-agents
+        run: |
+          # Remove existing tool-library in md-agents
+          rm -rf md-agents/tool-library
+          
+          # Copy all files except .git and .github
+          mkdir -p md-agents/tool-library
+          rsync -av --exclude='.git' --exclude='.github' tool-library/ md-agents/tool-library/
+
+      - name: Commit and push changes
+        run: |
+          cd md-agents
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add tool-library
+          
+          # Check if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          git commit -m "🔄 Sync tools from tool-library
+
+          Triggered by: ${{ github.event.head_commit.message }}
+          Source SHA: ${{ github.sha }}"
+          
+          git push
