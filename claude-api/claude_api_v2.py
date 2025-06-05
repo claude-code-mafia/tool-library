@@ -325,12 +325,131 @@ async def update_session(session_id: str, request: SessionUpdateRequest):
 
 @app.post("/sessions/{session_id}/clone")
 async def clone_session(session_id: str, new_name: str):
-    """Clone an existing session"""
+    """Clone a session and instruct the original to transfer knowledge"""
     try:
+        # Create the new session
         new_session = await session_manager.clone_session(session_id, new_name)
+        
+        # Get workspace paths
+        original_workspace = Path(session_manager.sessions[session_id]['workspace'])
+        new_workspace = Path(new_session['workspace'])
+        
+        # Create a transfer instruction file in the new session
+        transfer_file = new_workspace / ".session" / "awaiting_transfer.json"
+        transfer_data = {
+            "from_session_id": session_id,
+            "to_session_id": new_session['id'],
+            "created_at": datetime.utcnow().isoformat(),
+            "status": "pending"
+        }
+        with open(transfer_file, 'w') as f:
+            json.dump(transfer_data, f, indent=2)
+        
+        # Tell the original Claude to fork its knowledge
+        fork_prompt = f"""IMPORTANT: You need to fork your knowledge to a new session.
+
+A new session has been created as a fork of your current session. You need to transfer your knowledge to it.
+
+Please execute the following steps:
+1. Summarize everything important from our conversation
+2. Send this knowledge to the fork using this command:
+
+```bash
+curl -X POST http://localhost:8001/sessions/{new_session['id']}/receive-knowledge \\
+  -H "Content-Type: application/json" \\
+  -d '{{"from_session": "{session_id}", "knowledge": "<YOUR_SUMMARY_HERE>"}}'
+```
+
+Replace <YOUR_SUMMARY_HERE> with a comprehensive summary including:
+- All shared facts and context
+- Project state and decisions
+- Important files and their purposes
+- Current objectives and progress
+- Any other relevant information
+
+This will ensure your fork has all necessary context to continue the work."""
+        
+        # Send fork instruction to original session
+        fork_result = await execute_claude(
+            fork_prompt,
+            original_workspace,
+            session_id,
+            continue_session=True
+        )
+        
+        new_session["fork_instruction_sent"] = fork_result["success"]
+        new_session["awaiting_knowledge_transfer"] = True
+        
         return new_session
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+class ReceiveKnowledgeRequest(BaseModel):
+    from_session: str
+    knowledge: str
+
+
+@app.post("/sessions/{session_id}/receive-knowledge")
+async def receive_knowledge(session_id: str, request: ReceiveKnowledgeRequest):
+    """Receive knowledge transfer from parent session"""
+    session = session_manager.sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    workspace = Path(session['workspace'])
+    
+    # Check if this session is expecting a transfer
+    transfer_file = workspace / ".session" / "awaiting_transfer.json"
+    if transfer_file.exists():
+        with open(transfer_file, 'r') as f:
+            transfer_data = json.load(f)
+        
+        # Verify the transfer is from the expected parent
+        if transfer_data["from_session_id"] != request.from_session:
+            raise HTTPException(status_code=403, detail="Unexpected knowledge source")
+        
+        # Update transfer status
+        transfer_data["status"] = "received"
+        transfer_data["received_at"] = datetime.utcnow().isoformat()
+        with open(transfer_file, 'w') as f:
+            json.dump(transfer_data, f, indent=2)
+    
+    # Initialize the fork with the transferred knowledge
+    init_prompt = f"""You are a fork of another Claude session. You have just received a knowledge transfer from your parent session.
+
+---KNOWLEDGE TRANSFER FROM PARENT---
+{request.knowledge}
+---END TRANSFER---
+
+Please:
+1. Acknowledge receipt of this knowledge
+2. Summarize what you now know
+3. Register your session ID as instructed in CLAUDE.md
+4. Indicate you're ready to continue the work"""
+    
+    # Send to Claude in this session
+    result = await execute_claude(
+        init_prompt,
+        workspace,
+        session_id,
+        continue_session=False
+    )
+    
+    if result["success"]:
+        # Update session metadata
+        session_manager.sessions[session_id]["knowledge_received"] = True
+        session_manager.sessions[session_id]["parent_session"] = request.from_session
+        session_manager.sessions[session_id]["knowledge_transfer"] = request.knowledge[:500] + "..." if len(request.knowledge) > 500 else request.knowledge
+        session_manager.save_metadata()
+        
+        return {
+            "status": "success",
+            "message": "Knowledge transfer received",
+            "fork_response": result["response"]
+        }
+    else:
+        raise HTTPException(status_code=500, detail=result["error"])
 
 
 @app.post("/sessions/{session_id}/archive")
