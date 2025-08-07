@@ -1,0 +1,3 @@
+#!/bin/bash
+# cloudflare-workers CLI wrapper
+exec python3 /Users/pete/Projects/tool-library/cloudflare-workers/cf-cli.py "$@"

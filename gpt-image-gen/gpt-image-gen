@@ -1,0 +1,18 @@
+#!/bin/bash
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Add Bun to PATH if it exists
+if [ -d "$HOME/.bun/bin" ]; then
+    export PATH="$HOME/.bun/bin:$PATH"
+fi
+
+# Check if running from source or compiled
+if [ -f "$SCRIPT_DIR/src/cli.ts" ]; then
+    # Run from source with Bun
+    exec bun run "$SCRIPT_DIR/src/cli.ts" "$@"
+else
+    # This shouldn't happen in dev, but handle it
+    echo "Error: src/cli.ts not found"
+    exit 1
+fi

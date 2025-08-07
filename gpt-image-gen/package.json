@@ -1,0 +1,26 @@
+{
+  "name": "gpt-image-gen",
+  "version": "1.0.0",
+  "description": "CLI tool for generating images using OpenAI's GPT-Image-1 model",
+  "main": "src/cli.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "build": "bun build --compile --minify ./src/cli.ts --outfile gpt-image-gen",
+    "build:all": "bun run build.ts",
+    "test": "bun test"
+  },
+  "keywords": [
+    "openai",
+    "gpt-image-1",
+    "image-generation",
+    "cli",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

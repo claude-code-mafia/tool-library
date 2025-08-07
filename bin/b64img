@@ -1,0 +1,3 @@
+#!/bin/bash
+# b64img CLI wrapper
+exec /Users/pete/Projects/tool-library/b64img/b64img "$@"

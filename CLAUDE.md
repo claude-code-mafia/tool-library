@@ -180,7 +180,6 @@ tool-library/
 
 - **gmail / gmail-advanced**: Email management
 - **grok**: xAI chat and X/Twitter analysis  
-- **image-gen**: DALL-E image generation
 - **current-time**: Network time retrieval
 - **typefully**: Twitter/X content creation
 

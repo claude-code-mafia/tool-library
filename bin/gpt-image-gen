@@ -1,0 +1,3 @@
+#!/bin/bash
+# gpt-image-gen CLI wrapper
+exec /Users/pete/Projects/tool-library/gpt-image-gen/gpt-image-gen "$@"

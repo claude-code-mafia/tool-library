@@ -1,0 +1,11 @@
+#!/bin/bash
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Add Bun to PATH if it exists
+if [ -d "$HOME/.bun/bin" ]; then
+    export PATH="$HOME/.bun/bin:$PATH"
+fi
+
+# Run the TypeScript file with Bun
+exec bun run "$SCRIPT_DIR/b64img.ts" "$@"
